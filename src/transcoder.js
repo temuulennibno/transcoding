@@ -92,6 +92,11 @@ export async function transcodeToHLS(inputPath, outputDir, videoId) {
     });
   }
 
+  // Generate thumbnails
+  console.log('Generating thumbnails...');
+  const thumbnailsData = await generateThumbnails(inputPath, outputDir);
+  console.log(`Generated ${thumbnailsData.count} thumbnails`);
+
   // Create master playlist
   const masterPlaylistPath = path.join(outputDir, 'master.m3u8');
   const masterPlaylist = generateMasterPlaylist(QUALITY_CONFIGS, videoId);
@@ -102,6 +107,7 @@ export async function transcodeToHLS(inputPath, outputDir, videoId) {
   return {
     masterPlaylistPath,
     variants: results,
+    thumbnails: thumbnailsData,
   };
 }
 
@@ -115,6 +121,104 @@ function generateMasterPlaylist(configs, videoId) {
   }
 
   return content;
+}
+
+/**
+ * Generate thumbnail images every 5 seconds
+ */
+export async function generateThumbnails(inputPath, outputDir) {
+  const thumbnailsDir = path.join(outputDir, 'thumbnails');
+  if (!fs.existsSync(thumbnailsDir)) {
+    fs.mkdirSync(thumbnailsDir, { recursive: true });
+  }
+
+  // Get video duration first
+  const duration = await getVideoDuration(inputPath);
+  const interval = 5; // seconds
+  const thumbnailCount = Math.ceil(duration / interval);
+
+  console.log(`Video duration: ${duration}s, generating ${thumbnailCount} thumbnails`);
+
+  // Generate thumbnails using FFmpeg
+  const thumbnailPattern = path.join(thumbnailsDir, 'thumb%04d.jpg');
+
+  await new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .outputOptions([
+        `-vf fps=1/${interval},scale=160:90`,
+        '-q:v 2', // High quality JPEG
+      ])
+      .output(thumbnailPattern)
+      .on('start', (commandLine) => {
+        console.log('Thumbnail FFmpeg command:', commandLine);
+      })
+      .on('end', () => {
+        console.log('Thumbnail generation completed');
+        resolve();
+      })
+      .on('error', (err) => {
+        console.error('Thumbnail generation error:', err);
+        reject(err);
+      })
+      .run();
+  });
+
+  // Generate WebVTT file
+  const vttPath = path.join(outputDir, 'thumbnails.vtt');
+  const vttContent = generateThumbnailVTT(thumbnailCount, interval);
+  fs.writeFileSync(vttPath, vttContent);
+
+  return {
+    count: thumbnailCount,
+    directory: thumbnailsDir,
+    vttPath,
+    interval,
+  };
+}
+
+/**
+ * Get video duration in seconds
+ */
+function getVideoDuration(inputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(inputPath, (err, metadata) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(metadata.format.duration);
+      }
+    });
+  });
+}
+
+/**
+ * Generate WebVTT file for thumbnail previews
+ */
+function generateThumbnailVTT(thumbnailCount, interval) {
+  let vtt = 'WEBVTT\n\n';
+
+  for (let i = 0; i < thumbnailCount; i++) {
+    const startTime = i * interval;
+    const endTime = (i + 1) * interval;
+    const thumbnailNum = String(i + 1).padStart(4, '0');
+
+    vtt += `${formatVTTTime(startTime)} --> ${formatVTTTime(endTime)}\n`;
+    vtt += `thumbnails/thumb${thumbnailNum}.jpg\n\n`;
+  }
+
+  return vtt;
+}
+
+/**
+ * Format seconds to VTT timestamp (HH:MM:SS.mmm)
+ */
+function formatVTTTime(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const millis = Math.floor((seconds % 1) * 1000);
+
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
 }
 
 export function cleanupFiles(directory) {

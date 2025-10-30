@@ -144,6 +144,33 @@ async function processTranscoding(videoId, filename, originalKey) {
       }
     }
 
+    // Upload thumbnails
+    if (result.thumbnails) {
+      console.log(`[${videoId}] Uploading thumbnails...`);
+
+      // Upload VTT file
+      await uploadToR2(
+        r2Client,
+        bucket,
+        `hls/${videoId}/thumbnails.vtt`,
+        result.thumbnails.vttPath,
+        'text/vtt'
+      );
+      console.log(`[${videoId}] Uploaded thumbnails.vtt`);
+
+      // Upload thumbnail images
+      const thumbnailFiles = fs.readdirSync(result.thumbnails.directory);
+      for (const file of thumbnailFiles) {
+        const filePath = path.join(result.thumbnails.directory, file);
+        const r2Key = `hls/${videoId}/thumbnails/${file}`;
+
+        await uploadToR2(r2Client, bucket, r2Key, filePath, 'image/jpeg');
+        console.log(`[${videoId}] Uploaded ${r2Key}`);
+      }
+
+      console.log(`[${videoId}] Uploaded ${thumbnailFiles.length} thumbnails`);
+    }
+
     console.log(`[${videoId}] Upload complete`);
 
     // Step 4: Update video status in backend
