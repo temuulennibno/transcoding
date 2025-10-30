@@ -15,6 +15,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const API_SECRET = process.env.API_SECRET;
 
+// Queue management
+let isProcessing = false;
+const queue = [];
+
 app.use(express.json());
 
 // Health check
@@ -36,18 +40,54 @@ app.post('/transcode', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: videoId, originalKey' });
   }
 
+  // Add to queue
+  queue.push({ videoId, filename, originalKey });
+  const position = queue.length;
+
+  console.log(`Video ${videoId} added to queue at position ${position}`);
+
+  // Update status to 'queued' in backend
+  await updateVideoStatus(videoId, 'queued', null, position);
+
   // Respond immediately to acknowledge receipt
   res.json({
     success: true,
-    message: 'Transcoding job queued',
+    message: `Transcoding job queued at position ${position}`,
     videoId,
+    queuePosition: position,
   });
 
-  // Process transcoding asynchronously
-  processTranscoding(videoId, filename, originalKey).catch((error) => {
-    console.error('Transcoding failed:', error);
-  });
+  // Start processing if not already processing
+  if (!isProcessing) {
+    processQueue();
+  }
 });
+
+async function processQueue() {
+  if (isProcessing || queue.length === 0) {
+    return;
+  }
+
+  isProcessing = true;
+
+  while (queue.length > 0) {
+    const job = queue.shift();
+    console.log(`Processing video ${job.videoId} (${queue.length} remaining in queue)`);
+
+    // Update queue positions for remaining items
+    for (let i = 0; i < queue.length; i++) {
+      await updateVideoStatus(queue[i].videoId, 'queued', null, i + 1);
+    }
+
+    // Update status to 'processing'
+    await updateVideoStatus(job.videoId, 'processing', null, null);
+
+    // Process the transcoding
+    await processTranscoding(job.videoId, job.filename, job.originalKey);
+  }
+
+  isProcessing = false;
+}
 
 async function processTranscoding(videoId, filename, originalKey) {
   const r2Client = createR2Client();
@@ -124,7 +164,7 @@ async function processTranscoding(videoId, filename, originalKey) {
   }
 }
 
-async function updateVideoStatus(videoId, status, masterPlaylistKey) {
+async function updateVideoStatus(videoId, status, masterPlaylistKey, queuePosition = null) {
   try {
     const backendUrl = process.env.BACKEND_URL;
     const response = await fetch(`${backendUrl}/api/videos/${videoId}/status`, {
@@ -136,6 +176,7 @@ async function updateVideoStatus(videoId, status, masterPlaylistKey) {
       body: JSON.stringify({
         status,
         master_playlist_key: masterPlaylistKey,
+        queue_position: queuePosition,
       }),
     });
 
