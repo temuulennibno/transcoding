@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  transcoding:
+    build: .
+    container_name: video-transcoding-service
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - API_SECRET=${API_SECRET}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
+      - R2_BUCKET_NAME=${R2_BUCKET_NAME}
+      - BACKEND_URL=${BACKEND_URL}
+    volumes:
+      # Optional: mount temp directory for better performance
+      - /tmp/transcoding:/tmp
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
